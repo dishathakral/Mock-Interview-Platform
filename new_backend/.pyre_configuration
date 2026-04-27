@@ -1,0 +1,14 @@
+{
+  "source_directories": [
+    "."
+  ],
+  "search_path": [
+    "venv/Lib/site-packages"
+  ],
+  "typeshed": "venv/Lib/site-packages/typeshed",
+  "exclude": [
+    "venv",
+    ".*/venv/.*",
+    ".*/__pycache__/.*"
+  ]
+}
