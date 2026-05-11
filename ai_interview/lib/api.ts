@@ -44,6 +44,9 @@ export const api = {
     getInterview: (interviewId: string) =>
         fetchFromApi(`/interview/${interviewId}`),
 
+    getInterviews: (userId?: string) =>
+        fetchFromApi(userId ? `/interviews?userId=${userId}` : "/interviews"),
+
     stopInterview: (interviewId: number) =>
         fetchFromApi("/stop-interview", {
             method: "POST",

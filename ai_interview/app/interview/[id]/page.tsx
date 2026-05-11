@@ -90,10 +90,11 @@ export default function InterviewPage({ params }: { params: Promise<{ id: string
     const { id } = use(params);
     const router = useRouter();
     const [mode, setMode] = useState<"audio" | "text">("audio");
-    const [status, setStatus] = useState<UltravoxSessionStatus | "disconnected" | "connecting">("disconnected");
+    const [status, setStatus] = useState<UltravoxSessionStatus | "disconnected" | "connecting" | "processing">("disconnected");
     const [interview, setInterview] = useState<any>(null);
     const [transcripts, setTranscripts] = useState<any[]>([]);
     const sessionRef = useRef<UltravoxSession | null>(null);
+    const isProcessingRef = useRef(false);
 
     const { label: elapsed } = useStopwatch(status === "speaking" || status === "listening" || status === "thinking");
 
@@ -131,6 +132,25 @@ export default function InterviewPage({ params }: { params: Promise<{ id: string
         return () => clearInterval(interval);
     }, [status]);
 
+    // Polling for processing completion
+    useEffect(() => {
+        if (status !== "processing") return;
+
+        const interval = setInterval(async () => {
+            try {
+                const data = await api.getInterview(id);
+                if (data.interview?.status === "evaluated" || data.interview?.status === "completed") {
+                    clearInterval(interval);
+                    router.push(`/interview/${id}/feedback`);
+                }
+            } catch (err) {
+                console.error("Error polling interview status:", err);
+            }
+        }, 3000);
+
+        return () => clearInterval(interval);
+    }, [status, id, router]);
+
     const startCall = async () => {
         if (!interview) return;
         setStatus("connecting");
@@ -155,6 +175,7 @@ export default function InterviewPage({ params }: { params: Promise<{ id: string
             // 3. Setup listeners
             session.addEventListener("status", () => {
                 console.log("[Ultravox] Session status:", session.status);
+                if (isProcessingRef.current) return; // Prevent overwriting our 'processing' state
                 setStatus(session.status);
                 // Sync transcripts on status change too
                 if (session.transcripts) {
@@ -194,11 +215,27 @@ export default function InterviewPage({ params }: { params: Promise<{ id: string
     };
 
     const endCall = async () => {
-        if (sessionRef.current) {
-            sessionRef.current.leaveCall();
+        console.log("End Call button clicked");
+        toast.info("Ending call and starting evaluation...");
+        isProcessingRef.current = true;
+        setStatus("processing");
+        
+        try {
+            if (sessionRef.current) {
+                sessionRef.current.leaveCall();
+            }
+        } catch (e) {
+            console.error("Error leaving call:", e);
         }
-        await api.stopInterview(Number(id));
-        router.push("/");
+        
+        try {
+            await api.stopInterview(Number(id));
+        } catch (e) {
+            console.error("Error stopping interview:", e);
+            toast.error("Failed to process interview. Backend error.");
+            isProcessingRef.current = false;
+            setStatus("disconnected");
+        }
     };
 
 
@@ -342,6 +379,11 @@ export default function InterviewPage({ params }: { params: Promise<{ id: string
                                 <PrimaryButton onClick={startCall} className="px-8 py-4 text-lg">
                                     <Mic className="mr-2" /> Start Interview
                                 </PrimaryButton>
+                            ) : status === "processing" ? (
+                                <div className="flex flex-col items-center gap-2">
+                                    <Loader2 className="animate-spin h-8 w-8 text-indigo-500" />
+                                    <p className="text-zinc-400">Processing your interview...</p>
+                                </div>
                             ) : (
                                 <div className="flex flex-col items-center gap-2">
                                     <div className={`rounded-full p-4 ${status === 'listening' ? 'bg-red-500/20 animate-pulse' : 'bg-indigo-600'}`}>

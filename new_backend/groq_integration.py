@@ -38,7 +38,7 @@ async def evaluate_interview_with_llama(
                 "Please set up Groq API key at https://console.groq.com"
             )
 
-        evaluation_prompt = f"""You are an expert interview evaluator. Analyze this interview transcript and provide a structured evaluation.
+        evaluation_prompt = f"""You are a Multi-Agent Interview Evaluation System consisting of three expert agents. Analyze this interview transcript and provide a structured, multi-dimensional evaluation.
 
 CANDIDATE: {candidate_name}
 ROLE: {role}
@@ -47,6 +47,10 @@ INTERVIEW TYPE: {interview_type}
 TRANSCRIPT:
 {transcript}
 
+AGENT 1 (Technical Depth): Evaluates technical correctness, problem-solving quality, and understanding of concepts.
+AGENT 2 (Communication Clarity): Evaluates explanation quality, structure, and clarity.
+AGENT 3 (Confidence & Delivery): Evaluates tone, confidence, fluency, and hesitation.
+
 Provide a JSON response with EXACTLY this structure (no additional text, just JSON):
 {{
   "overall_score": 7.5,
@@ -54,8 +58,15 @@ Provide a JSON response with EXACTLY this structure (no additional text, just JS
   "communication": 8,
   "technical_depth": 7,
   "adaptability": 8,
-  "full_report": "Candidate demonstrated solid problem-solving skills...",
-  "groq_feedback": "Strengths: Clear communication, good technical understanding. Areas: Could explore more edge cases."
+  "full_report": "Overall summary of the candidate's performance...",
+  "groq_feedback": {{
+    "agent_1_feedback": "Agent 1 notes on technical correctness and depth...",
+    "agent_2_feedback": "Agent 2 notes on communication structure and clarity...",
+    "agent_3_feedback": "Agent 3 notes on delivery, fluency, and confidence...",
+    "strengths": ["Strength 1", "Strength 2"],
+    "areas_of_improvement": ["Area 1", "Area 2"],
+    "actionable_suggestions": ["Suggestion 1", "Suggestion 2"]
+  }}
 }}
 
 Score Interpretation:

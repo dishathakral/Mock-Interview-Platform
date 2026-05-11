@@ -70,6 +70,7 @@ async def save_interview_transcript(
     call_id: str,
     transcript: str,
     summary: str,
+    speaker: str = "combined"
 ) -> list[dict]:
     """Insert a transcript entry for a completed call."""
     result = (
@@ -78,6 +79,7 @@ async def save_interview_transcript(
             {
                 "interview_id": interview_id,
                 "call_id": call_id,
+                "speaker": speaker,
                 "transcript": transcript,
                 "summary": summary,
                 "created_at": _now(),

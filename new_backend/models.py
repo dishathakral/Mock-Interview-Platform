@@ -13,7 +13,7 @@ class ScheduleInterviewRequest(BaseModel):
     candidateEmail: str
     role: str
     interviewType: Optional[str] = "Technical"
-    agentName: Optional[str] = "Alex"
+    agentName: Optional[str] = "Aarav"
     companyName: Optional[str] = None
     resume: Optional[str] = None
     customInstructions: Optional[str] = None

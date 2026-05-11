@@ -9,7 +9,8 @@ from typing import Any
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+import asyncio
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings, supabase, ULTRAVOX_API_URL, INTERVIEW_SYSTEM_PROMPT, INTERVIEW_PROMPTS
@@ -407,7 +408,7 @@ async def save_evaluation(req: SaveEvaluationRequest):
 
 # 5. Stop Interview
 @app.post("/api/stop-interview")
-async def stop_interview(req: StopInterviewRequest):
+async def stop_interview(req: StopInterviewRequest, background_tasks: BackgroundTasks):
     try:
         # Get and stop the active session
         session_data = active_sessions.get(req.interviewId)
@@ -421,13 +422,16 @@ async def stop_interview(req: StopInterviewRequest):
             del active_sessions[req.interviewId]
             logger.info(f"[API] Interview session stopped: {req.interviewId}")
 
-        # Update interview status to completed
+        # Update interview status to processing
         await update_interview_session(req.interviewId, {
-            "status": "completed",
+            "status": "processing",
             "ended_at": _now_iso(),
         })
 
-        return {"success": True, "message": "Interview stopped successfully"}
+        # Trigger background processing task
+        background_tasks.add_task(process_interview_background_task, req.interviewId)
+
+        return {"success": True, "message": "Interview stopped and processing started"}
     except Exception as error:
         logger.error(f"Error stopping interview: {error}")
         raise HTTPException(status_code=500, detail=str(error))
@@ -476,6 +480,21 @@ async def get_interview(interview_id: int):
         logger.error(f"Error fetching interview: {error}")
         raise HTTPException(status_code=500, detail=str(error))
 
+from typing import Optional
+
+# 5c. Get All Interviews (For Dashboard)
+@app.get("/api/interviews")
+async def get_all_interviews(userId: Optional[str] = None):
+    try:
+        query = supabase.table("interview_summaries").select("*").order("created_at", desc=True)
+        if userId:
+            query = query.eq("created_by", userId)
+            
+        result = query.execute()
+        return {"interviews": result.data or []}
+    except Exception as error:
+        logger.error(f"Error fetching interviews: {error}")
+        raise HTTPException(status_code=500, detail=str(error))
 
 # 6. Save Transcript Entry
 @app.post("/api/save-transcript")
@@ -551,7 +570,7 @@ async def evaluate_interview(req: EvaluateInterviewRequest):
                     "adaptability": evaluation.get("adaptability"),
                     "overall_score": evaluation.get("overall_score"),
                     "full_report": evaluation.get("full_report"),
-                    "groq_feedback": evaluation.get("groq_feedback"),
+                    "groq_feedback": json.dumps(evaluation.get("groq_feedback")) if isinstance(evaluation.get("groq_feedback"), dict) else evaluation.get("groq_feedback"),
                     "created_at": _now_iso(),
                     "updated_at": _now_iso(),
                 },
@@ -601,6 +620,75 @@ async def update_interview(interview_id: int, req: UpdateInterviewRequest):
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "timestamp": _now_iso()}
+
+
+# ==================== BACKGROUND TASKS ====================
+
+async def process_interview_background_task(interview_id: int):
+    try:
+        logger.info(f"[Process] Starting background processing for interview {interview_id}")
+        
+        # Fetch interview details
+        interview_result = supabase.table("interviews").select("*").eq("id", interview_id).single().execute()
+        interview = interview_result.data
+        if not interview or not interview.get("call_id"):
+            logger.error(f"[Process] Interview {interview_id} not found or no call_id")
+            await update_interview_session(interview_id, {"status": "completed"})
+            return
+            
+        call_id = interview["call_id"]
+        
+        # Wait a bit for Ultravox to finish finalizing transcript
+        await asyncio.sleep(4)
+        
+        # Fetch transcript
+        messages = await _get_call_transcript(call_id)
+        transcript = ""
+        summary = ""
+        msg_list = messages.get("results", [])
+        if isinstance(msg_list, list) and msg_list:
+            transcript = "\n".join(f"{msg.get('role', '').replace('MESSAGE_ROLE_', '')}: {msg.get('text', '')}" for msg in msg_list)
+            last_message = msg_list[-1]
+            summary = last_message.get("text", "")
+            
+        # Save transcript
+        if transcript:
+            await save_interview_transcript(interview_id, call_id, transcript, summary)
+            
+            # Evaluate with Groq
+            logger.info(f"[Process] Evaluating transcript for {interview_id}...")
+            evaluation = await evaluate_interview_with_llama(
+                candidate_name=interview.get("candidate_name", "Candidate"),
+                role=interview.get("role", "Position"),
+                interview_type=interview.get("interview_type", "Technical"),
+                transcript=transcript
+            )
+            
+            # Save evaluation
+            supabase.table("evaluations").upsert({
+                "interview_id": interview_id,
+                "problem_solving": evaluation.get("problem_solving"),
+                "communication": evaluation.get("communication"),
+                "technical_depth": evaluation.get("technical_depth"),
+                "adaptability": evaluation.get("adaptability"),
+                "overall_score": evaluation.get("overall_score"),
+                "full_report": evaluation.get("full_report"),
+                "groq_feedback": json.dumps(evaluation.get("groq_feedback")) if isinstance(evaluation.get("groq_feedback"), dict) else evaluation.get("groq_feedback"),
+                "created_at": _now_iso(),
+                "updated_at": _now_iso()
+            }, on_conflict="interview_id").execute()
+            
+            # Update status to evaluated
+            await update_interview_session(interview_id, {"status": "evaluated"})
+            logger.info(f"[Process] Evaluation complete and saved for {interview_id}.")
+        else:
+            logger.warning(f"[Process] No transcript found for interview {interview_id}")
+            await update_interview_session(interview_id, {"status": "completed"})
+            
+    except Exception as e:
+        logger.error(f"[Process] Background task failed for {interview_id}: {e}")
+        # Mark as completed even if evaluation fails
+        await update_interview_session(interview_id, {"status": "completed"})
 
 
 # ==================== WEBSOCKET ENDPOINT ====================
